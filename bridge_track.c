@@ -165,6 +165,8 @@ static port_t * find_if(bridge_t * br, int if_index)
 
 static inline void delete_if(port_t *prt)
 {
+    INFO("Delete interface %s", prt->sysdeps.name);
+
     list_del(&prt->list);
     MSTP_IN_delete_port(prt);
     free(prt);
@@ -197,7 +199,10 @@ void bridge_one_second(void)
 {
     bridge_t *br;
     list_for_each_entry(br, &bridges, list)
-        MSTP_IN_one_second(br);
+    {
+        if(br->stp_enabled)
+            MSTP_IN_one_second(br);
+    }
 }
 
 /* New MAC address is stored in addr, which also holds the old value on entry.
@@ -239,7 +244,7 @@ static void set_br_up(bridge_t * br, bool up)
         MSTP_IN_set_bridge_address(br, br->sysdeps.macaddr);
     }
 
-    if(changed)
+    if(changed && br->stp_enabled)
     {
         MSTP_IN_set_bridge_enable(br, br->sysdeps.up);
 
@@ -321,7 +326,7 @@ static void set_if_up(port_t *prt, bool up)
             changed = true;
         }
     }
-    if(changed)
+    if(changed && prt->bridge->stp_enabled)
     {
         MSTP_IN_set_port_enable(prt, prt->sysdeps.up, prt->sysdeps.speed,
                                 prt->sysdeps.duplex);
@@ -330,68 +335,79 @@ static void set_if_up(port_t *prt, bool up)
     }
 }
 
-int bridge_try_autoadd(const char *br_name)
+static bridge_t * bridge_autohandle(int br_index, const char *br_name)
 {
+    bool stp_enabled = true;
+    bridge_t *br;
+    port_t *prt;
     struct dirent **namelist;
-    int j, state, res, ifcount, ifadd;
-    int br_array[2];
-    int *ifaces_list;
+    int j, state, ifcount;
 
     if(!handle_all_bridges && !mstpd_conf_exist_br(br_name))
     {
-        INFO("No config file for bridge %s, ignored", br_name);
-        return -2;
+        INFO("No config file for bridge %s, monitoring", br_name);
+        stp_enabled = false;
     }
 
     if(0 > (state = get_bridge_stpstate(br_name)))
-        return -2;
+    {
+        INFO("Unable to get STP state for bridge %s, monitoring", br_name);
+        stp_enabled = false;
+    }
 
     if(state != 2)
     {
-        INFO("Bridge %s do not have userspace STP active, ignored", br_name);
-        return -2;
+        INFO("Bridge %s do not have userspace STP active, monitoring", br_name);
+        stp_enabled = false;
     }
 
-    br_array[0] = 1;
-    br_array[1] = if_nametoindex(br_name);
-    if (br_array[1] == 0)
+    if(!(br = find_br(br_index)))
     {
-        ERROR("Can't find index for %s %s. Not a valid interface.",
-              "bridge", br_name);
-        return -2;
-    }
-
-    if(0 > (ifcount = get_bridge_port_list(br_name, &namelist)))
-    {
-        return ifcount;
-    }
-
-    if(NULL == (ifaces_list = malloc((ifcount + 1) * sizeof(int))))
-    {
-        return -1;
-    }
-
-    ifadd = 0;
-    for (j = 1; j <= ifcount; ++j)
-    {
-        const int ifi = if_nametoindex(namelist[j - 1]->d_name);
-        if (ifi)
+        if(!(br = create_br(br_index)))
         {
-            ifaces_list[ifadd + 1] = ifi;
-            ifadd++;
+            ERROR("Couldn't create data for bridge interface %d", br_index);
+            return NULL;
         }
         else
-            ERROR("Can't find index for %s %s. Not a valid interface.",
-                  "port", namelist[j - 1]);
-        free(namelist[j - 1]);
+            LOG("Created bridge %s", br->sysdeps.name);
+
+        if((ifcount = get_bridge_port_list(br_name, &namelist)) > 0)
+        {
+            LOG("Found %d interfaces of bridge %s", ifcount, br->sysdeps.name);
+
+            for (j = 1; j <= ifcount; ++j)
+            {
+                const int ifi = if_nametoindex(namelist[j - 1]->d_name);
+                if (ifi)
+                {
+                    if(!(prt = create_if(br, ifi)))
+                    {
+                        INFO("Couldn't create data for interface %d (master %s)",
+                             ifi, br->sysdeps.name);
+                    }
+                    else
+                        LOG("Added interface %d to bridge %s",
+                             prt->sysdeps.name, br->sysdeps.name);
+                }
+                else
+                    ERROR("Can't find index for %s %s. Not a valid interface.",
+                          "port", namelist[j - 1]);
+                free(namelist[j - 1]);
+            }
+
+            free(namelist);
+        }
+        else
+            INFO("Not found any interfaces on bridge %s", br->sysdeps.name);
     }
-    free(namelist);
-    ifaces_list[0] = ifadd;
 
-    res = CTL_add_bridges(br_array, &ifaces_list);
+    if (stp_enabled)
+    {
+        br->stp_enabled = true;
+        INFO("Enable STP on bridge %s", br->sysdeps.name);
+    }
 
-    free(ifaces_list);
-    return res;
+    return br;
 }
 
 /* br_index == if_index means: interface is bridge master */
@@ -471,11 +487,12 @@ int bridge_notify(int br_index, int if_index, const char *if_name, bool newlink,
             {
                 if(!(br = find_br(br_index)))
                 {
-                    /* Bridge not in list, try autoadd */
-                    return bridge_try_autoadd(if_name);
+                    /* Auto-create bridge */
+                    if(!(br = bridge_autohandle(br_index, if_name)))
+                        return -2;
+
                 }
-                else
-                    set_br_up(br, up);
+                set_br_up(br, up);
             }
         }
     }
@@ -1273,14 +1290,11 @@ int CTL_set_vids2mstids(int br_index, __u16 *vids2mstids)
     return MSTP_IN_set_all_vids2mstids(br, vids2mstids) ? 0 : -1;
 }
 
-int CTL_add_bridges(int *br_array, int* *ifaces_lists)
+int CTL_add_bridges(int *br_array)
 {
-    int i, j, ifcount, brcount = br_array[0];
-    bridge_t *br, *other_br;
-    port_t *prt, *nxt;
-    int br_flags, if_flags;
-    int *if_array;
-    bool found;
+    int i, brcount = br_array[0];
+    bridge_t *br;
+    port_t *prt;
 
     for(i = 1; i <= brcount; ++i)
     {
@@ -1292,54 +1306,23 @@ int CTL_add_bridges(int *br_array, int* *ifaces_lists)
                       br_array[i]);
                 return -1;
             }
-            if(0 <= (br_flags = get_flags(br->sysdeps.name)))
-                set_br_up(br, !!(br_flags & IFF_UP));
         }
-        if_array = ifaces_lists[i - 1];
-        ifcount = if_array[0];
-        /* delete all interfaces which are not in list */
-        list_for_each_entry_safe(prt, nxt, &br->ports, br_list)
+
+        if(br->stp_enabled)
+            continue; /* already managed */
+
+        br->stp_enabled = true;
+        INFO("Enable STP on bridge %s", br->sysdeps.name);
+
+        /* Enable the bridge directly - sysdeps.up may already be set
+         * from monitoring, so set_br_up would not detect a change */
+        MSTP_IN_set_bridge_enable(br, br->sysdeps.up);
+
+        /* Enable all existing ports */
+        list_for_each_entry(prt, &br->ports, br_list)
         {
-            found = false;
-            for(j = 1; j <= ifcount; ++j)
-            {
-                if(prt->sysdeps.if_index == if_array[j])
-                {
-                    found = true;
-                    break;
-                }
-            }
-            if(!found)
-                delete_if(prt);
-        }
-        /* add all new interfaces from the list */
-        for(j = 1; j <= ifcount; ++j)
-        {
-            if(NULL != find_if(br, if_array[j]))
-                continue;
-            /* Check if this interface is slave of another bridge */
-            list_for_each_entry(other_br, &bridges, list)
-            {
-                if(other_br != br)
-                    if(delete_if_byindex(other_br, if_array[j]))
-                    {
-                        INFO("Device %d has come to bridge %s. "
-                             "Missed notify for deletion from bridge %s",
-                             if_array[j], br->sysdeps.name,
-                             other_br->sysdeps.name);
-                        break;
-                    }
-            }
-            if(NULL == (prt = create_if(br, if_array[j])))
-            {
-                INFO("Couldn't create data for interface %d (master %s)",
-                     if_array[j], br->sysdeps.name);
-                continue;
-            }
-            if(0 <= (if_flags = get_flags(prt->sysdeps.name)))
-                set_if_up(prt, (IFF_UP | IFF_RUNNING) ==
-                               (if_flags & (IFF_UP | IFF_RUNNING))
-                         );
+            MSTP_IN_set_port_enable(prt, prt->sysdeps.up, prt->sysdeps.speed,
+                                    prt->sysdeps.duplex);
         }
     }
 
@@ -1349,9 +1332,24 @@ int CTL_add_bridges(int *br_array, int* *ifaces_lists)
 int CTL_del_bridges(int *br_array)
 {
     int i, brcount = br_array[0];
+    bridge_t *br;
+    port_t *prt;
 
     for(i = 1; i <= brcount; ++i)
-        delete_br_byindex(br_array[i]);
+    {
+        if(!(br = find_br(br_array[i])))
+            continue;
+        if(br->stp_enabled)
+        {
+            INFO("Disable STP on bridge %s", br->sysdeps.name);
+            /* Disable all ports */
+            list_for_each_entry(prt, &br->ports, br_list)
+                MSTP_IN_set_port_enable(prt, false, 0, 0);
+            /* Disable the bridge */
+            MSTP_IN_set_bridge_enable(br, false);
+            br->stp_enabled = false;
+        }
+    }
 
     return 0;
 }
