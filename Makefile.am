@@ -27,6 +27,14 @@ mstpctl_CFLAGS = $(mstpd_CFLAGS) -DNO_DAEMON
 
 AM_CPPFLAGS = -I$(top_srcdir) -I$(top_srcdir)/lib
 
+# unit testing
+LOG_DRIVER = env AM_TAP_AWK='$(AWK)' $(SHELL) $(top_srcdir)/tap-driver.sh
+AM_TESTS_ENVIRONMENT = CMOCKA_MESSAGE_OUTPUT=TAP
+
+check_PROGRAMS = \
+	$(NULL)
+TESTS = $(check_PROGRAMS)
+
 EXTRA_DIST = bridge-stp.in utils/ifupdown.sh.in utils/mstp_config_bridge.in \
 	utils/mstpd.service.in utils/bash_completion utils/nm-dispatcher.in \
 	README.md README.VLANs.md mstpd.spec autogen.sh
