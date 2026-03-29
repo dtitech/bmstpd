@@ -202,7 +202,7 @@ static per_tree_port_t * create_ptp(tree_t *tree, port_t *prt)
     per_tree_port_t *ptp = calloc(1, sizeof(*ptp));
     if(!ptp)
     {
-        ERROR_PRTNAME(prt->bridge, prt, "Out of memory");
+        ERROR_PRTNAME(prt, "Out of memory");
         return NULL;
     }
     ptp->port = prt;
@@ -569,7 +569,7 @@ void MSTP_IN_rx_bpdu(port_t *prt, bpdu_t *bpdu, int size)
     if(prt->BpduGuardPort)
     {
         prt->BpduGuardError = true;
-        ERROR_PRTNAME(br, prt,
+        ERROR_PRTNAME(prt,
                       "Received BPDU on BPDU Guarded Port - Port Down");
         MSTP_OUT_shutdown_port(prt);
         return;
@@ -577,7 +577,7 @@ void MSTP_IN_rx_bpdu(port_t *prt, bpdu_t *bpdu, int size)
 
     if(prt->bpduFilterPort)
     {
-        LOG_PRTNAME(br, prt,
+        LOG_PRTNAME(prt,
                    "Received BPDU on BPDU Filtered Port - discarded");
         ++(prt->num_rx_bpdu_filtered);
         return;
@@ -585,13 +585,13 @@ void MSTP_IN_rx_bpdu(port_t *prt, bpdu_t *bpdu, int size)
 
     if(!br->bridgeEnabled)
     {
-        INFO_PRTNAME(br, prt, "Received BPDU while bridge is disabled");
+        INFO_PRTNAME(prt, "Received BPDU while bridge is disabled");
         return;
     }
 
     if(prt->rcvdBpdu)
     {
-        ERROR_PRTNAME(br, prt, "Port hasn't processed previous BPDU");
+        ERROR_PRTNAME(prt, "Port hasn't processed previous BPDU");
         return;
     }
 
@@ -599,7 +599,7 @@ void MSTP_IN_rx_bpdu(port_t *prt, bpdu_t *bpdu, int size)
     if((TCN_BPDU_SIZE > size) || (0 != bpdu->protocolIdentifier))
     {
 bpdu_validation_failed:
-        INFO_PRTNAME(br, prt, "BPDU validation failed");
+        INFO_PRTNAME(prt, "BPDU validation failed");
         return;
     }
     switch(bpdu->bpduType)
@@ -608,7 +608,7 @@ bpdu_validation_failed:
             /* 14.4.b) */
             /* Valid TCN BPDU */
             bpdu->protocolVersion = protoSTP;
-            LOG_PRTNAME(br, prt, "received TCN BPDU");
+            LOG_PRTNAME(prt, "received TCN BPDU");
             break;
         case bpduTypeConfig:
             /* 14.4.a) */
@@ -616,7 +616,7 @@ bpdu_validation_failed:
                 goto bpdu_validation_failed;
             /* Valid Config BPDU */
             bpdu->protocolVersion = protoSTP;
-            LOG_PRTNAME(br, prt, "received Config BPDU%s",
+            LOG_PRTNAME(prt, "received Config BPDU%s",
                         (bpdu->flags & (1 << offsetTc)) ? ", tcFlag" : ""
                        );
             break;
@@ -627,7 +627,7 @@ bpdu_validation_failed:
                     goto bpdu_validation_failed;
                 /* Valid RST BPDU */
                 /* bpdu->protocolVersion = protoRSTP; */
-                LOG_PRTNAME(br, prt, "received RST BPDU%s",
+                LOG_PRTNAME(prt, "received RST BPDU%s",
                             (bpdu->flags & (1 << offsetTc)) ? ", tcFlag" : ""
                            );
                 break;
@@ -652,7 +652,7 @@ bpdu_validation_failed:
             { /* 14.4.d) */
                 /* Valid RST BPDU */
                 bpdu->protocolVersion = protoRSTP;
-                LOG_PRTNAME(br, prt, "received RST BPDU");
+                LOG_PRTNAME(prt, "received RST BPDU");
                 break;
             }
             /* 14.4.e) */
@@ -660,7 +660,7 @@ bpdu_validation_failed:
             bpdu->protocolVersion = protoMSTP;
             prt->rcvdBpduNumOfMstis = mstis_size
                                       / sizeof(msti_configuration_message_t);
-            LOG_PRTNAME(br, prt, "received MST BPDU%s with %d MSTIs",
+            LOG_PRTNAME(prt, "received MST BPDU%s with %d MSTIs",
                         (bpdu->flags & (1 << offsetTc)) ? ", tcFlag" : "",
                         prt->rcvdBpduNumOfMstis
                        );
@@ -686,7 +686,7 @@ bpdu_validation_failed:
     if(prt->BaInconsistent)
     {
         prt->BaInconsistent = false;
-        INFO_PRTNAME(br, prt, "Clear Bridge assurance inconsistency");
+        INFO_PRTNAME(prt, "Clear Bridge assurance inconsistency");
     }
     updtbrAssuRcvdInfoWhile(prt);
 
@@ -1066,7 +1066,6 @@ int MSTP_IN_set_cist_port_config(port_t *prt, CIST_PortConfig *cfg)
     __u32 new_ExternalPathCost;
     bool new_p2p;
     per_tree_port_t *cist;
-    bridge_t *br = prt->bridge;
 
     /* Firstly, validation */
     if(cfg->set_admin_p2p)
@@ -1090,7 +1089,7 @@ int MSTP_IN_set_cist_port_config(port_t *prt, CIST_PortConfig *cfg)
         __u32 newCost = cfg->admin_external_port_path_cost;
         if(200000000 < newCost)
         {
-            INFO_PRTNAME(br, prt,
+            INFO_PRTNAME(prt,
                     "portpathcost must be between 0 and 200000000, truncated");
             newCost = 200000000;
         }
@@ -1174,7 +1173,7 @@ int MSTP_IN_set_cist_port_config(port_t *prt, CIST_PortConfig *cfg)
         if(prt->BpduGuardPort != cfg->bpdu_guard_port)
         {
             prt->BpduGuardPort = cfg->bpdu_guard_port;
-            INFO_PRTNAME(br, prt,"BpduGuardPort new=%d", prt->BpduGuardPort);
+            INFO_PRTNAME(prt,"BpduGuardPort new=%d", prt->BpduGuardPort);
         }
     }
 
@@ -1183,14 +1182,14 @@ int MSTP_IN_set_cist_port_config(port_t *prt, CIST_PortConfig *cfg)
         if(prt->NetworkPort != cfg->network_port)
         {
             prt->NetworkPort = cfg->network_port;
-            INFO_PRTNAME(br, prt, "NetworkPort new=%d", prt->NetworkPort);
+            INFO_PRTNAME(prt, "NetworkPort new=%d", prt->NetworkPort);
             /* When Network port config is removed and bridge assurance
              * inconsistency is set, clear the inconsistency.
              */
             if(!prt->NetworkPort && prt->BaInconsistent)
             {
                 prt->BaInconsistent = false;
-                INFO_PRTNAME(br, prt, "Clear Bridge assurance inconsistency");
+                INFO_PRTNAME(prt, "Clear Bridge assurance inconsistency");
             }
             changed = true;
         }
@@ -1201,7 +1200,7 @@ int MSTP_IN_set_cist_port_config(port_t *prt, CIST_PortConfig *cfg)
         if(prt->dontTxmtBpdu != cfg->dont_txmt)
         {
             prt->dontTxmtBpdu = cfg->dont_txmt;
-            INFO_PRTNAME(br, prt, "donttxmt new=%d", prt->dontTxmtBpdu);
+            INFO_PRTNAME(prt, "donttxmt new=%d", prt->dontTxmtBpdu);
         }
     }
 
@@ -1211,7 +1210,7 @@ int MSTP_IN_set_cist_port_config(port_t *prt, CIST_PortConfig *cfg)
         {
             prt->bpduFilterPort = cfg->bpdu_filter_port;
             prt->num_rx_bpdu_filtered = 0;
-            INFO_PRTNAME(br, prt,"bpduFilterPort new=%d", prt->bpduFilterPort);
+            INFO_PRTNAME(prt,"bpduFilterPort new=%d", prt->bpduFilterPort);
         }
     }
 
@@ -1235,14 +1234,14 @@ int MSTP_IN_set_msti_port_config(per_tree_port_t *ptp, MSTI_PortConfig *cfg)
         __u8 newPri = cfg->port_priority;
         if(240 < newPri)
         {
-            INFO_MSTINAME(br, prt, ptp,
+            INFO_MSTINAME(ptp,
                     "Port Priority %hhu not between 0 and 240, truncated to 240",
                     newPri);
             newPri = 240;
         }
         if((newPri % 16))
         {
-            INFO_MSTINAME(br, prt, ptp,
+            INFO_MSTINAME(ptp,
                     "Port Priority %hhu not multiple of 16, truncated to %hhu",
                     newPri, (newPri/16)*16);
         }
@@ -1259,7 +1258,7 @@ int MSTP_IN_set_msti_port_config(per_tree_port_t *ptp, MSTI_PortConfig *cfg)
         __u32 newCost = cfg->admin_internal_port_path_cost;
         if(200000000 < newCost)
         {
-            INFO_MSTINAME(br, prt, ptp,
+            INFO_MSTINAME(ptp,
                     "treeportcost must be between 0 and 200000000, truncated");
             newCost = 200000000;
         }
@@ -2367,7 +2366,7 @@ static inline __u8 message_role_from_port_role(per_tree_port_t *ptp)
         case roleMaster:
             return encodedRoleMaster;
         default:
-            ERROR_PRTNAME(ptp->port->bridge, ptp->port,
+            ERROR_PRTNAME(ptp->port,
                           "Attempt to send from port with Disabled role");
             return encodedRoleAlternateBackup;
     }
@@ -5031,7 +5030,7 @@ static bool __br_state_machines_run(bridge_t *br, bool dry_run)
             if(dry_run) /* state change */
                 return true;
             prt->BaInconsistent = true;
-            ERROR_PRTNAME(prt->bridge, prt, "Bridge assurance inconsistent");
+            ERROR_PRTNAME(prt, "Bridge assurance inconsistent");
         }
     }
 

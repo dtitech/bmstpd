@@ -656,12 +656,12 @@ int bridge_vlan_notify(int if_index, bool newvlan, __u16 vid, __u8 state)
             {
                 if(ptp->MSTID == mstid)
                 {
-                    LOG_PRTNAME(br, prt, "Port did not have msti %hu yet, setting msti STP state %s",
+                    LOG_PRTNAME(prt, "Port did not have msti %hu yet, setting msti STP state %s",
                                 mstid, stp_state_name(ptp->state));
                     if(0 > br_set_msti_state(&rth_state,
                                              prt->sysdeps.if_index, mstid,
                                              ptp->state))
-                        ERROR_MSTINAME(br, prt, ptp, "Couldn't set kernel bridge state %s",
+                        ERROR_MSTINAME(ptp, "Couldn't set kernel bridge state %s",
                                        stp_state_name(ptp->state));
                     break;
                 }
@@ -674,7 +674,7 @@ int bridge_vlan_notify(int if_index, bool newvlan, __u16 vid, __u8 state)
             {
                 if (ptp->state != state)
                     if (0 > br_set_vlan_state(&rth_state, if_index, vid, ptp->state))
-                        ERROR_MSTINAME(br, prt, ptp, "VID %hu: failed setting STP state %s in kernel",
+                        ERROR_MSTINAME(ptp, "VID %hu: failed setting STP state %s in kernel",
                                        vid, stp_state_name(ptp->state));
                 break;
             }
@@ -879,7 +879,7 @@ void MSTP_OUT_set_state(per_tree_port_t *ptp, int new_state)
         default:
             break;
     }
-    INFO_MSTINAME(br, prt, ptp, "entering %s state", state_name);
+    INFO_MSTINAME(ptp, "entering %s state", state_name);
 
     if(have_per_vlan_state && !br->sysdeps.mst_en)
     {
@@ -892,7 +892,7 @@ void MSTP_OUT_set_state(per_tree_port_t *ptp, int new_state)
                 continue;
 
             if(0 > br_set_vlan_state(&rth_state, prt->sysdeps.if_index, vid, ptp->state))
-               ERROR_PRTNAME(br, prt, "Couldn't set kernel bridge state %s for vid %hu",
+               ERROR_PRTNAME(prt, "Couldn't set kernel bridge state %s for vid %hu",
                              state_name, vid);
             prt->sysdeps.vlan_state[vid] = new_state;
         }
@@ -901,14 +901,14 @@ void MSTP_OUT_set_state(per_tree_port_t *ptp, int new_state)
     {
         /* Translate new CIST state to the kernel bridge code */
         if(0 > br_set_state(&rth_state, prt->sysdeps.if_index, ptp->state))
-            ERROR_PRTNAME(br, prt, "Couldn't set kernel bridge state %s",
+            ERROR_PRTNAME(prt, "Couldn't set kernel bridge state %s",
                           state_name);
     }
     else if(br->sysdeps.mst_en && port_has_tree_vlan(ptp))
     {
         if(0 > br_set_msti_state(&rth_state, prt->sysdeps.if_index,
                                  __be16_to_cpu(ptp->MSTID), ptp->state))
-            ERROR_MSTINAME(br, prt, ptp, "Couldn't set kernel bridge state %s",
+            ERROR_MSTINAME(ptp, "Couldn't set kernel bridge state %s",
                            state_name);
     }
 }
@@ -952,7 +952,7 @@ void MSTP_OUT_set_vid2mstid(bridge_t *br, __u16 vid, __u16 mstid)
             {
                 if(0 > br_set_msti_state(&rth_state, prt->sysdeps.if_index, mstid,
                                          ptp->state))
-                    ERROR_MSTINAME(br, prt, ptp, "Couldn't set kernel bridge state %s",
+                    ERROR_MSTINAME(ptp, "Couldn't set kernel bridge state %s",
                                    stp_state_name(ptp->state));
             }
         }
@@ -974,7 +974,7 @@ void MSTP_OUT_flush_all_mstids(per_tree_port_t * ptp)
     port_t *prt = ptp->port;
     bridge_t *br = prt->bridge;
 
-    INFO_MSTINAME(br, prt, ptp, "Flushing forwarding database");
+    INFO_MSTINAME(ptp, "Flushing forwarding database");
 
     /* Translate CIST flushing to the kernel bridge code */
     if(have_per_vlan_state)
@@ -988,14 +988,14 @@ void MSTP_OUT_flush_all_mstids(per_tree_port_t * ptp)
                 continue;
 
             if(0 > br_flush_port(&rth_state, br->sysdeps.if_index, prt->sysdeps.if_index, vid))
-               ERROR_PRTNAME(br, prt,
+               ERROR_PRTNAME(prt,
                              "Couldn't flush kernel bridge forwarding database for vid %i", vid);
         }
     }
     else if(0 == ptp->MSTID)
     { /* CIST */
         if(0 > br_flush_port(&rth_state, br->sysdeps.if_index, prt->sysdeps.if_index, -1))
-            ERROR_PRTNAME(br, prt,
+            ERROR_PRTNAME(prt,
                           "Couldn't flush kernel bridge forwarding database");
     }
 
@@ -1006,7 +1006,7 @@ void MSTP_OUT_set_ageing_time(port_t *prt, unsigned int ageingTime)
 {
     bridge_t *br = prt->bridge;
 
-    INFO_PRTNAME(br, prt, "Setting new ageing time to %u", ageingTime);
+    INFO_PRTNAME(prt, "Setting new ageing time to %u", ageingTime);
 
     /*
      * Translate new ageing time to the kernel bridge code.
@@ -1020,7 +1020,6 @@ void MSTP_OUT_set_ageing_time(port_t *prt, unsigned int ageingTime)
 void MSTP_OUT_tx_bpdu(port_t *prt, bpdu_t * bpdu, int size)
 {
     char *bpdu_type, *tcflag;
-    bridge_t *br = prt->bridge;
 
     switch(bpdu->protocolVersion)
     {
@@ -1051,7 +1050,7 @@ void MSTP_OUT_tx_bpdu(port_t *prt, bpdu_t * bpdu, int size)
     if((protoSTP == bpdu->protocolVersion) && (bpduTypeTCN == bpdu->bpduType))
     {
         ++(prt->num_tx_tcn);
-        LOG_PRTNAME(br, prt, "sending %s BPDU", bpdu_type);
+        LOG_PRTNAME(prt, "sending %s BPDU", bpdu_type);
     }
     else
     {
@@ -1061,7 +1060,7 @@ void MSTP_OUT_tx_bpdu(port_t *prt, bpdu_t * bpdu, int size)
             ++(prt->num_tx_tcn);
             tcflag = ", tcFlag";
         }
-        LOG_PRTNAME(br, prt, "sending %s BPDU%s", bpdu_type, tcflag);
+        LOG_PRTNAME(prt, "sending %s BPDU%s", bpdu_type, tcflag);
     }
 
     struct llc_header h;
@@ -1083,7 +1082,7 @@ void MSTP_OUT_tx_bpdu(port_t *prt, bpdu_t * bpdu, int size)
 void MSTP_OUT_shutdown_port(port_t *prt)
 {
     if(0 > if_shutdown(prt->sysdeps.name))
-        ERROR_PRTNAME(prt->bridge, prt, "Couldn't shutdown port");
+        ERROR_PRTNAME(prt, "Couldn't shutdown port");
 }
 
 /* User interface commands */
@@ -1135,7 +1134,7 @@ void MSTP_OUT_shutdown_port(port_t *prt)
         }                                                                \
     if(!found)                                                           \
     {                                                                    \
-        ERROR_PRTNAME(br, prt, "Couldn't find MSTI with ID %hu", mstid); \
+        ERROR_PRTNAME(prt, "Couldn't find MSTI with ID %hu", mstid);     \
         return -1;                                                       \
     }
 
