@@ -873,6 +873,13 @@ void MSTP_OUT_set_state(per_tree_port_t *ptp, int new_state)
     ptp->state = new_state;
     state_name = stp_state_name(ptp->state);
 
+    if(!prt->sysdeps.up && (ptp->state != BR_STATE_DISABLED)
+       && (ptp->state != BR_STATE_BLOCKING))
+    {
+       ERROR_MSTINAME(ptp, "trying to set a down port to %s", state_name);
+       return;
+    }
+
     switch(ptp->state)
     {
         case BR_STATE_FORWARDING:
@@ -885,6 +892,10 @@ void MSTP_OUT_set_state(per_tree_port_t *ptp, int new_state)
             break;
     }
     INFO_MSTINAME(ptp, "entering %s state", state_name);
+
+    /* we can only modify STP states of up ports */
+    if(!prt->sysdeps.up)
+        return;
 
     if(have_per_vlan_state && !br->sysdeps.mst_en)
     {
