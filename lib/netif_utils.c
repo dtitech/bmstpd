@@ -54,7 +54,7 @@ int netsock_init(void)
     netsock = socket(AF_INET, SOCK_DGRAM, 0);
     if(0 > netsock)
     {
-        ERROR("Couldn't open inet socket for ioctls: %m\n");
+        ERROR("Couldn't open inet socket for ioctls: %m");
         return -1;
     }
     return 0;
