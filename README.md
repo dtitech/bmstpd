@@ -1,25 +1,31 @@
-mstpd: Multiple Spanning Tree Protocol Daemon
+bmstpd: Bridge Multiple Spanning Tree Protocol Daemon
 =============================================
 
-MSTPD is an open source user-space daemon licensed under GPLv2.
+BMSTPD is an open source user-space daemon licensed under GPLv2, it is
+a fork of MSTPD extended for:
+- Linux Bridge per VLAN STP states
+- Linux Bridge MSTIs
+- Support for VLAN STP states on switchdev devices <sup>(currently only on Mellanox Spectrum based switches through included kernel patches)</sup>
+- Support for MSTIs on DSA devices <sup>(depends on kernel version 5.18+ and support in DSA kernel driver)</sup>
+- Permanent file tree based configuration
 
-MSTPD is reported to be compliant with IXIA ANVL RSTP test suite, with
+BMSTPD is reported to be compliant with IXIA ANVL RSTP test suite, with
 the notable exception of looped-back BPDUs (see discussion on the matter
 on the Implementation Features wiki page:
-https://github.com/dtitech/mstpd/wiki/ImplementationFeatures).
+https://github.com/dtitech/bmstpd/wiki/ImplementationFeatures).
 
 **Important note!** MSTP part of the code is currently in experimental phase,
 so it should be mostly stable, but it can behave unexpectedly in corner cases.
 Be warry if using.
 
-Official repository: https://github.com/dtitech/mstpd
+Official repository: https://github.com/dtitech/bmstpd
 
 Implementation Features
 -----------------------
 
-See the wiki page: https://github.com/dtitech/mstpd/wiki/ImplementationFeatures
+See the wiki page: https://github.com/dtitech/bmstpd/wiki/ImplementationFeatures
 
-Also MSTPD includes a number of useful features which are not defined in
+Also BMSTPD includes a number of useful features which are not defined in
 802.1Q-2005 standard, but are found on many commercial switches. Namely:
 
   - BPDU Guard. Added by Satish Ashok.
@@ -35,12 +41,12 @@ Also MSTPD includes a number of useful features which are not defined in
 Goals of the project
 --------------------
 
+ - Allow for RSTP and MSTP support on Linux based machines and switches
+
  - Create reliable and well-tested MSTP code.
 
  - Get some user base - the more users of this code, the more test
  coverage is.
-
- - Replace rstpd.
 
 Current state
 -------------
@@ -48,7 +54,7 @@ Current state
 The daemon depends on the bridge Linux kernel code to gather basic info
 about bridge, such as bridge state (up/down, STP on/off), slave
 interfaces for the bridge and their state (up/down). Also daemon
-translates CIST states to the kernel bridge slaves, so mstpd in (r)stp
+translates CIST states to the kernel bridge slaves, so bmstpd in (r)stp
 mode can be used as replacement for the current rstpd (and even for the
 in-kernel stp!).
 
@@ -83,12 +89,12 @@ Additionally Linux bridging gained support for MSTIs in version 5.18:
   - Once a VLANs is assigned to a MSTI, the port states of ports that are
   members of that VLAN can be configured
 
-MSTPD currently supports Linux bridge MSTIs when bridge is configured
-with MST enabled, this is supported mainly on software bridge, but there
+BMSTPD currently supports Linux bridge MSTIs when bridge is configured
+with MST enabled, this is supported mainly on software bridges, but there
 are some DSA drivers which have MST support.
 
 With bridge MST disabled, daemon will use per VLAN stp states if they are
-supported in running Kernel, this mode is usable on software bridge and
+supported in running kernel, this mode is usable on software bridge and
 on Mellanox Spectrum based platforms with included kernel patches.
 
 > [!WARNING]
