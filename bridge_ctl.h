@@ -88,12 +88,16 @@ typedef struct
           __PRETTY_FUNCTION__, _ptp->port->bridge->sysdeps.name,     \
          _ptp->port->sysdeps.name, __be16_to_cpu(ptp->MSTID), ##_args)
 
-extern struct rtnl_handle rth_state;
-
 extern bool handle_all_bridges;
 extern bool have_per_vlan_state;
 
 int init_bridge_ops(void);
+
+int br_set_vlan_msti(unsigned ifindex, __u16 vid, __u16 msti);
+int br_set_msti_state(unsigned ifindex, __u16 msti, __u8 state);
+int br_set_vlan_state(unsigned ifindex, __u16 vid, __u8 state);
+int br_set_state(unsigned ifindex, __u8 state);
+int br_flush_port(unsigned br_ifindex, unsigned port_ifindex, int vid);
 
 int bridge_notify(int br_index, int if_index, const char *if_name, bool newlink, unsigned flags);
 

@@ -45,10 +45,165 @@ enum
 static struct rtnl_handle rth;
 static struct epoll_event_handler br_handler;
 
-struct rtnl_handle rth_state;
+static struct rtnl_handle rth_state;
 
 bool handle_all_bridges = 1;
 bool have_per_vlan_state = 1;
+
+int br_set_vlan_msti(unsigned ifindex, __u16 vid, __u16 msti)
+{
+    struct
+    {
+        struct nlmsghdr n;
+        struct br_vlan_msg bvm;
+        char buf[256];
+    } req;
+    struct rtattr *gopts;
+
+    memset(&req, 0, sizeof(req));
+
+    req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct br_vlan_msg));
+    req.n.nlmsg_flags = NLM_F_REQUEST;
+    req.n.nlmsg_type = RTM_NEWVLAN;
+    req.bvm.family = PF_BRIDGE;
+    req.bvm.ifindex = ifindex;
+
+    gopts = addattr_nest(&req.n, sizeof(req), BRIDGE_VLANDB_GLOBAL_OPTIONS | NLA_F_NESTED);
+
+    addattr16(&req.n, sizeof(req), BRIDGE_VLANDB_GOPTS_ID, vid);
+    addattr16(&req.n, sizeof(req), BRIDGE_VLANDB_GOPTS_MSTI, msti);
+
+    addattr_nest_end(&req.n, gopts);
+
+    return rtnl_talk(&rth_state, &req.n, NULL);
+}
+
+int br_set_msti_state(unsigned ifindex, __u16 msti, __u8 state)
+{
+    struct
+    {
+        struct nlmsghdr n;
+        struct ifinfomsg ifi;
+        char buf[256];
+    } req;
+    struct rtattr *af_spec, *mst, *entry;
+
+    memset(&req, 0, sizeof(req));
+
+    req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
+    req.n.nlmsg_flags = NLM_F_REQUEST;
+    req.n.nlmsg_type = RTM_SETLINK;
+    req.ifi.ifi_family = PF_BRIDGE;
+    req.ifi.ifi_index = ifindex;
+
+    af_spec = addattr_nest(&req.n, sizeof(req), IFLA_AF_SPEC);
+    mst = addattr_nest(&req.n, sizeof(req), IFLA_BRIDGE_MST);
+
+    entry = addattr_nest(&req.n, sizeof(req), IFLA_BRIDGE_MST_ENTRY | NLA_F_NESTED);
+
+    addattr16(&req.n, sizeof(req), IFLA_BRIDGE_MST_ENTRY_MSTI, msti);
+    addattr8(&req.n, sizeof(req), IFLA_BRIDGE_MST_ENTRY_STATE, state);
+
+    addattr_nest_end(&req.n, entry);
+    addattr_nest_end(&req.n, mst);
+    addattr_nest_end(&req.n, af_spec);
+
+    return rtnl_talk(&rth_state, &req.n, NULL);
+}
+
+int br_set_vlan_state(unsigned ifindex, __u16 vid, __u8 state)
+{
+    struct
+    {
+        struct nlmsghdr n;
+        struct br_vlan_msg bvm;
+        char buf[256];
+    } req;
+    char entry_buf[256];
+    struct rtattr *rta = (void *)entry_buf;
+    struct bridge_vlan_info vlan_info;
+    struct rtattr *nest;
+
+    LOG("ifindex %d vid %hu state %s", ifindex, vid, stp_state_name(state));
+
+    memset(&req, 0, sizeof(req));
+
+    req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct br_vlan_msg));
+    req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_REPLACE;
+    req.n.nlmsg_type = RTM_NEWVLAN;
+    req.bvm.family = AF_BRIDGE;
+    req.bvm.ifindex = ifindex;
+
+    rta->rta_type = BRIDGE_VLANDB_ENTRY;
+    rta->rta_len = RTA_LENGTH(0);
+
+    vlan_info.vid = vid;
+    vlan_info.flags = BRIDGE_VLAN_INFO_ONLY_OPTS;
+
+    nest = rta_nest(rta, sizeof(entry_buf), BRIDGE_VLANDB_ENTRY);
+    rta_addattr_l(rta, sizeof(entry_buf), BRIDGE_VLANDB_ENTRY_INFO, &vlan_info, sizeof(vlan_info));
+    rta_addattr8(rta, sizeof(entry_buf), BRIDGE_VLANDB_ENTRY_STATE, state);
+
+    rta_nest_end(rta, nest);
+
+    addraw_l(&req.n, sizeof(req.buf), RTA_DATA(rta), RTA_PAYLOAD(rta));
+
+    return rtnl_talk(&rth_state, &req.n, NULL);
+}
+
+int br_set_state(unsigned ifindex, __u8 state)
+{
+    struct
+    {
+        struct nlmsghdr n;
+        struct ifinfomsg ifi;
+        char buf[256];
+    } req;
+
+    LOG("ifindex %d state %s", ifindex, stp_state_name(state));
+
+    memset(&req, 0, sizeof(req));
+
+    req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
+    req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_REPLACE;
+    req.n.nlmsg_type = RTM_SETLINK;
+    req.ifi.ifi_family = AF_BRIDGE;
+    req.ifi.ifi_index = ifindex;
+
+    addattr8(&req.n, sizeof(req.buf), IFLA_PROTINFO, state);
+
+    return rtnl_talk(&rth_state, &req.n, NULL);
+}
+
+int br_flush_port(unsigned br_ifindex, unsigned port_ifindex, int vid)
+{
+    struct
+    {
+        struct nlmsghdr n;
+        struct ndmsg ndm;
+        char buf[256];
+    } req;
+
+    memset(&req, 0, sizeof(req));
+
+    req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ndmsg));
+    req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_BULK;
+    req.n.nlmsg_type = RTM_DELNEIGH;
+    req.ndm.ndm_family = PF_BRIDGE;
+    req.ndm.ndm_ifindex = br_ifindex;
+
+    req.ndm.ndm_flags = NTF_SELF | NTF_MASTER;
+    /* only flush dynamic entries */
+    req.ndm.ndm_state = 0;
+
+    addattr16(&req.n, sizeof(req.buf), NDA_NDM_STATE_MASK,
+              NUD_NOARP | NUD_PERMANENT);
+    addattr32(&req.n, sizeof(req.buf), NDA_IFINDEX, port_ifindex);
+    if (vid > -1)
+        addattr16(&req.n, sizeof(req), NDA_VLAN, vid);
+
+    return rtnl_talk(&rth_state, &req.n, NULL);
+}
 
 static int dump_br_msg(struct nlmsghdr *n, void *arg)
 {

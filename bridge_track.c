@@ -22,7 +22,6 @@
 #include "packet.h"
 #include "log.h"
 #include "mstp.h"
-#include "libnetlink.h"
 #include "mstpd_conf.h"
 
 #ifndef SYSFS_CLASS_NET
@@ -31,9 +30,6 @@
 
 static LIST_HEAD(bridges);
 static LIST_HEAD(ports);
-
-static int br_set_vlan_state(struct rtnl_handle *rth, unsigned ifindex, __u16 vid, __u8 state);
-static int br_set_state(struct rtnl_handle *rth, unsigned ifindex, __u8 state);
 
 static bridge_t * create_br(int if_index)
 {
@@ -251,7 +247,7 @@ static void set_br_up(bridge_t * br, bool up)
 		else
                   state = BR_STATE_DISABLED;
 
-                br_set_state(&rth_state,  prt->sysdeps.if_index, state);
+                br_set_state(prt->sysdeps.if_index, state);
                 /* TODO: vlans? */
             }
         }
@@ -315,7 +311,8 @@ static void set_if_up(port_t *prt, bool up)
         MSTP_IN_set_port_enable(prt, prt->sysdeps.up, prt->sysdeps.speed,
                                 prt->sysdeps.duplex);
         if (have_per_vlan_state)
-            br_set_state(&rth_state,  prt->sysdeps.if_index, up && prt->bridge->sysdeps.up ? BR_STATE_FORWARDING : BR_STATE_DISABLED);
+            br_set_state(prt->sysdeps.if_index,
+                         up && prt->bridge->sysdeps.up ? BR_STATE_FORWARDING : BR_STATE_DISABLED);
     }
 }
 
@@ -517,69 +514,6 @@ static bool port_has_tree_vlan(per_tree_port_t *ptp)
     return false;
 }
 
-static int br_set_vlan_msti(struct rtnl_handle *rth, unsigned ifindex,
-                            __u16 vid, __u16 msti)
-{
-    struct
-    {
-        struct nlmsghdr n;
-        struct br_vlan_msg bvm;
-        char buf[256];
-    } req;
-    struct rtattr *gopts;
-
-    memset(&req, 0, sizeof(req));
-
-    req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct br_vlan_msg));
-    req.n.nlmsg_flags = NLM_F_REQUEST;
-    req.n.nlmsg_type = RTM_NEWVLAN;
-    req.bvm.family = PF_BRIDGE;
-    req.bvm.ifindex = ifindex;
-
-    gopts = addattr_nest(&req.n, sizeof(req), BRIDGE_VLANDB_GLOBAL_OPTIONS | NLA_F_NESTED);
-
-    addattr16(&req.n, sizeof(req), BRIDGE_VLANDB_GOPTS_ID, vid);
-    addattr16(&req.n, sizeof(req), BRIDGE_VLANDB_GOPTS_MSTI, msti);
-
-    addattr_nest_end(&req.n, gopts);
-
-    return rtnl_talk(rth, &req.n, NULL);
-}
-
-static int br_set_msti_state(struct rtnl_handle *rth, unsigned ifindex,
-                             __u16 msti, __u8 state)
-{
-    struct
-    {
-        struct nlmsghdr n;
-        struct ifinfomsg ifi;
-        char buf[256];
-    } req;
-    struct rtattr *af_spec, *mst, *entry;
-
-    memset(&req, 0, sizeof(req));
-
-    req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
-    req.n.nlmsg_flags = NLM_F_REQUEST;
-    req.n.nlmsg_type = RTM_SETLINK;
-    req.ifi.ifi_family = PF_BRIDGE;
-    req.ifi.ifi_index = ifindex;
-
-    af_spec = addattr_nest(&req.n, sizeof(req), IFLA_AF_SPEC);
-    mst = addattr_nest(&req.n, sizeof(req), IFLA_BRIDGE_MST);
-
-    entry = addattr_nest(&req.n, sizeof(req), IFLA_BRIDGE_MST_ENTRY | NLA_F_NESTED);
-
-    addattr16(&req.n, sizeof(req), IFLA_BRIDGE_MST_ENTRY_MSTI, msti);
-    addattr8(&req.n, sizeof(req), IFLA_BRIDGE_MST_ENTRY_STATE, state);
-
-    addattr_nest_end(&req.n, entry);
-    addattr_nest_end(&req.n, mst);
-    addattr_nest_end(&req.n, af_spec);
-
-    return rtnl_talk(rth, &req.n, NULL);
-}
-
 int bridge_vlan_notify(int if_index, bool newvlan, __u16 vid, __u8 state)
 {
     per_tree_port_t *ptp;
@@ -608,8 +542,7 @@ int bridge_vlan_notify(int if_index, bool newvlan, __u16 vid, __u8 state)
             if(br->sysdeps.vlan_state[vid] == VLAN_STATE_UNASSIGNED)
             {
                LOG_BRNAME(br, "Bridge did not have vid %hu yet, updating msti", vid);
-               if(0 > br_set_vlan_msti(&rth_state, br->sysdeps.if_index,
-                                     vid, mstid))
+               if(0 > br_set_vlan_msti(br->sysdeps.if_index, vid, mstid))
                    ERROR_BRNAME(br, "Couldn't set kernel vlan %hu to msti %hu", vid, mstid);
             }
         }
@@ -642,9 +575,7 @@ int bridge_vlan_notify(int if_index, bool newvlan, __u16 vid, __u8 state)
                 {
                     LOG_PRTNAME(prt, "Port did not have msti %hu yet, setting msti STP state %s",
                                 mstid, stp_state_name(ptp->state));
-                    if(0 > br_set_msti_state(&rth_state,
-                                             prt->sysdeps.if_index, mstid,
-                                             ptp->state))
+                    if(0 > br_set_msti_state(prt->sysdeps.if_index, mstid, ptp->state))
                         ERROR_MSTINAME(ptp, "Couldn't set kernel bridge state %s",
                                        stp_state_name(ptp->state));
                     break;
@@ -657,7 +588,7 @@ int bridge_vlan_notify(int if_index, bool newvlan, __u16 vid, __u8 state)
             if (ptp->MSTID == mstid)
             {
                 if (ptp->state != state)
-                    if (0 > br_set_vlan_state(&rth_state, if_index, vid, ptp->state))
+                    if (0 > br_set_vlan_state(if_index, vid, ptp->state))
                         ERROR_MSTINAME(ptp, "VID %hu: failed setting STP state %s in kernel",
                                        vid, stp_state_name(ptp->state));
                 break;
@@ -736,100 +667,6 @@ void bridge_bpdu_rcv(int if_index, const unsigned char *data, int len)
                     (bpdu_t *)(data + sizeof(*h)), l - LLC_PDU_LEN_U);
 }
 
-static int br_set_vlan_state(struct rtnl_handle *rth, unsigned ifindex, __u16 vid, __u8 state)
-{
-    struct
-    {
-        struct nlmsghdr n;
-        struct br_vlan_msg bvm;
-        char buf[256];
-    } req;
-    char entry_buf[256];
-    struct rtattr *rta = (void *)entry_buf;
-    struct bridge_vlan_info vlan_info;
-    struct rtattr *nest;
-
-    LOG("ifindex %d vid %hu state %s", ifindex, vid, stp_state_name(state));
-
-    memset(&req, 0, sizeof(req));
-
-    req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct br_vlan_msg));
-    req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_REPLACE;
-    req.n.nlmsg_type = RTM_NEWVLAN;
-    req.bvm.family = AF_BRIDGE;
-    req.bvm.ifindex = ifindex;
-
-    rta->rta_type = BRIDGE_VLANDB_ENTRY;
-    rta->rta_len = RTA_LENGTH(0);
-
-    vlan_info.vid = vid;
-    vlan_info.flags = BRIDGE_VLAN_INFO_ONLY_OPTS;
-
-    nest = rta_nest(rta, sizeof(entry_buf), BRIDGE_VLANDB_ENTRY);
-    rta_addattr_l(rta, sizeof(entry_buf), BRIDGE_VLANDB_ENTRY_INFO, &vlan_info, sizeof(vlan_info));
-    rta_addattr8(rta, sizeof(entry_buf), BRIDGE_VLANDB_ENTRY_STATE, state);
-
-    rta_nest_end(rta, nest);
-
-    addraw_l(&req.n, sizeof(req.buf), RTA_DATA(rta), RTA_PAYLOAD(rta));
-
-    return rtnl_talk(rth, &req.n, NULL);
-}
-
-static int br_set_state(struct rtnl_handle *rth, unsigned ifindex, __u8 state)
-{
-    struct
-    {
-        struct nlmsghdr n;
-        struct ifinfomsg ifi;
-        char buf[256];
-    } req;
-
-    LOG("ifindex %d state %s", ifindex, stp_state_name(state));
-
-    memset(&req, 0, sizeof(req));
-
-    req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ifinfomsg));
-    req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_REPLACE;
-    req.n.nlmsg_type = RTM_SETLINK;
-    req.ifi.ifi_family = AF_BRIDGE;
-    req.ifi.ifi_index = ifindex;
-
-    addattr8(&req.n, sizeof(req.buf), IFLA_PROTINFO, state);
-
-    return rtnl_talk(rth, &req.n, NULL);
-}
-
-static int br_flush_port(struct rtnl_handle *rth, unsigned br_ifindex, unsigned port_ifindex, int vid)
-{
-    struct
-    {
-        struct nlmsghdr n;
-        struct ndmsg ndm;
-        char buf[256];
-    } req;
-
-    memset(&req, 0, sizeof(req));
-
-    req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct ndmsg));
-    req.n.nlmsg_flags = NLM_F_REQUEST | NLM_F_BULK;
-    req.n.nlmsg_type = RTM_DELNEIGH;
-    req.ndm.ndm_family = PF_BRIDGE;
-    req.ndm.ndm_ifindex = br_ifindex;
-
-    req.ndm.ndm_flags = NTF_SELF | NTF_MASTER;
-    /* only flush dynamic entries */
-    req.ndm.ndm_state = 0;
-
-    addattr16(&req.n, sizeof(req.buf), NDA_NDM_STATE_MASK,
-              NUD_NOARP | NUD_PERMANENT);
-    addattr32(&req.n, sizeof(req.buf), NDA_IFINDEX, port_ifindex);
-    if (vid > -1)
-        addattr16(&req.n, sizeof(req), NDA_VLAN, vid);
-
-    return rtnl_talk(rth, &req.n, NULL);
-}
-
 static int br_set_ageing_time(char *brname, unsigned int ageing_time)
 {
     char fname[128], str_time[32];
@@ -891,7 +728,7 @@ void MSTP_OUT_set_state(per_tree_port_t *ptp, int new_state)
             if (prt->sysdeps.vlan_state[vid] == VLAN_STATE_UNASSIGNED)
                 continue;
 
-            if(0 > br_set_vlan_state(&rth_state, prt->sysdeps.if_index, vid, ptp->state))
+            if(0 > br_set_vlan_state(prt->sysdeps.if_index, vid, ptp->state))
                ERROR_PRTNAME(prt, "Couldn't set kernel bridge state %s for vid %hu",
                              state_name, vid);
             prt->sysdeps.vlan_state[vid] = new_state;
@@ -900,13 +737,13 @@ void MSTP_OUT_set_state(per_tree_port_t *ptp, int new_state)
     else if(0 == ptp->MSTID)
     {
         /* Translate new CIST state to the kernel bridge code */
-        if(0 > br_set_state(&rth_state, prt->sysdeps.if_index, ptp->state))
+        if(0 > br_set_state(prt->sysdeps.if_index, ptp->state))
             ERROR_PRTNAME(prt, "Couldn't set kernel bridge state %s",
                           state_name);
     }
     else if(br->sysdeps.mst_en && port_has_tree_vlan(ptp))
     {
-        if(0 > br_set_msti_state(&rth_state, prt->sysdeps.if_index,
+        if(0 > br_set_msti_state(prt->sysdeps.if_index,
                                  __be16_to_cpu(ptp->MSTID), ptp->state))
             ERROR_MSTINAME(ptp, "Couldn't set kernel bridge state %s",
                            state_name);
@@ -925,7 +762,7 @@ void MSTP_OUT_set_vid2mstid(bridge_t *br, __u16 vid, __u16 mstid)
         per_tree_port_t *ptp;
         bool found = false;
 
-        if (0 > br_set_vlan_msti(&rth_state, br->sysdeps.if_index, vid, mstid))
+        if (0 > br_set_vlan_msti(br->sysdeps.if_index, vid, mstid))
         {
             ERROR_BRNAME(br, "Couldn't set kernel vlan %i to msti %i", vid, mstid);
             return;
@@ -950,8 +787,7 @@ void MSTP_OUT_set_vid2mstid(bridge_t *br, __u16 vid, __u16 mstid)
 
             if(prt->sysdeps.vlan_state[vid] != VLAN_STATE_UNASSIGNED)
             {
-                if(0 > br_set_msti_state(&rth_state, prt->sysdeps.if_index, mstid,
-                                         ptp->state))
+                if(0 > br_set_msti_state(prt->sysdeps.if_index, mstid, ptp->state))
                     ERROR_MSTINAME(ptp, "Couldn't set kernel bridge state %s",
                                    stp_state_name(ptp->state));
             }
@@ -987,14 +823,14 @@ void MSTP_OUT_flush_all_mstids(per_tree_port_t * ptp)
             if (prt->sysdeps.vlan_state[vid] == VLAN_STATE_UNASSIGNED)
                 continue;
 
-            if(0 > br_flush_port(&rth_state, br->sysdeps.if_index, prt->sysdeps.if_index, vid))
+            if(0 > br_flush_port(br->sysdeps.if_index, prt->sysdeps.if_index, vid))
                ERROR_PRTNAME(prt,
                              "Couldn't flush kernel bridge forwarding database for vid %i", vid);
         }
     }
     else if(0 == ptp->MSTID)
     { /* CIST */
-        if(0 > br_flush_port(&rth_state, br->sysdeps.if_index, prt->sysdeps.if_index, -1))
+        if(0 > br_flush_port(br->sysdeps.if_index, prt->sysdeps.if_index, -1))
             ERROR_PRTNAME(prt,
                           "Couldn't flush kernel bridge forwarding database");
     }
