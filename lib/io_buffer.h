@@ -25,7 +25,11 @@ void iobuf_cleanup(struct iobuf *buffer);
 int iobuf_resize(struct iobuf *buffer, size_t new_size);
 
 int iobuf_read_from_fd(struct iobuf *buffer, int filedes);
+int iobuf_read_from_fd_sz(struct iobuf *buffer, int filedes, int size);
+int iobuf_read_from_fd_all(struct iobuf *buffer, int filedes);
 int iobuf_write_to_fd(int filedes, struct iobuf *buffer); /* from current pos */
+int iobuf_write_to_fd_sz(int filedes, struct iobuf *buffer, int size); /* from current pos */
+int iobuf_write_to_fd_all(int filedes, struct iobuf *buffer); /* from current pos */
 
 int iobuf_readcleanline(struct iobuf *buffer, char ** begin); /* reads line from file, return value length+1 */
 

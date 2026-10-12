@@ -14,6 +14,11 @@
 
 #define IO_PAGE_SIZE         4096
 
+static const size_t iobuf_round_to_page_size(size_t size)
+{
+    return ((size + (IO_PAGE_SIZE - 1)) / IO_PAGE_SIZE) * IO_PAGE_SIZE;
+}
+
 void iobuf_init(struct iobuf *buffer)
 {
     buffer->size = 0;
@@ -39,12 +44,14 @@ int iobuf_resize(struct iobuf *buffer, size_t new_size)
     if (buffer->size >= new_size)
         return 0;
 
-    const size_t new_cap = ((new_size + (IO_PAGE_SIZE - 1)) / IO_PAGE_SIZE)
-                             * IO_PAGE_SIZE;
+    const size_t new_cap = iobuf_round_to_page_size(new_size);
 
     void *new_data = realloc(buffer->data, new_cap);
     if (!new_data)
-        return ENOMEM;
+    {
+        errno = ENOMEM; // to be sure
+        return -1;
+    }
 
     buffer->data = (char *)new_data;
     buffer->cap = new_cap;
@@ -53,37 +60,107 @@ int iobuf_resize(struct iobuf *buffer, size_t new_size)
 
 int iobuf_read_from_fd(struct iobuf *buffer, int filedes)
 {
-    size_t rd;
+    size_t bfree = buffer->cap - buffer->size;
+    if (bfree < 1024)
+    {
+        const size_t esize = iobuf_round_to_page_size(buffer->cap + 1024);
+        if (iobuf_resize(buffer, esize))
+            return -1;
 
+        bfree = buffer->cap - buffer->size;
+    }
+    ssize_t rd = read(filedes, &(buffer->data[buffer->size]), bfree);
+    if (rd > 0)
+    {
+        buffer->size += rd;
+        return rd;
+    }
+    else if (rd == 0)
+        return 0;
+
+    return -1;
+}
+
+int iobuf_read_from_fd_sz(struct iobuf *buffer, int filedes, int size)
+{
+    if (!size)
+        return -1;
+
+    if ((buffer->cap - buffer->size) < size)
+    {
+        const size_t esize = iobuf_round_to_page_size(buffer->cap + size);
+        if (iobuf_resize(buffer, esize))
+            return -1;
+    }
+    ssize_t rd = read(filedes, &(buffer->data[buffer->size]), size);
+    if (rd > 0)
+    {
+        buffer->size += rd;
+        return rd;
+    }
+    else if (rd == 0)
+        return 0;
+
+    return -1;
+}
+
+int iobuf_read_from_fd_all(struct iobuf *buffer, int filedes)
+{
     for (;;)
     {
         size_t bfree = buffer->cap - buffer->size;
         if (bfree < 1024)
         {
-            if (iobuf_resize(buffer, buffer->cap + 4096))
-                return ENOMEM;
+            const size_t esize = iobuf_round_to_page_size(buffer->cap + 1024);
+            if (iobuf_resize(buffer, esize))
+                return -1;
 
             bfree = buffer->cap - buffer->size;
         }
-        rd = read(filedes, buffer->data, bfree);
+        ssize_t rd = read(filedes, &(buffer->data[buffer->size]), bfree);
         if (rd > 0)
-        {
             buffer->size += rd;
-        }
         else if (rd == 0)
-        {
-             break;
-        }
+            break;
         else
-        {
             return -1;
-        }
     }
 
     return 0;
 }
 
 int iobuf_write_to_fd(int filedes, struct iobuf *buffer)
+{
+    size_t wsize = buffer->size - buffer->pos;
+    if (!wsize)
+        return 0;
+
+    ssize_t wr = write(filedes, &buffer->data[buffer->pos], wsize);
+    if (wr < 0)
+        return -1;
+
+    buffer->pos += wr;
+    return wr;
+}
+
+int iobuf_write_to_fd_sz(int filedes, struct iobuf *buffer, int size)
+{
+    size_t wsize = buffer->size - buffer->pos;
+    if (!wsize)
+        return 0;
+
+    if (wsize > size)
+        wsize = size;
+
+    ssize_t wr = write(filedes, &buffer->data[buffer->pos], wsize);
+    if (wr < 0)
+        return -1;
+
+    buffer->pos += wr;
+    return wr;
+}
+
+int iobuf_write_to_fd_all(int filedes, struct iobuf *buffer)
 {
     for (;;)
     {
@@ -92,15 +169,13 @@ int iobuf_write_to_fd(int filedes, struct iobuf *buffer)
             return 0;
 
         if (wsize > 65536)
-        {
             wsize = 65536;
-        }
 
-        size_t wr = write(filedes, &buffer->data[buffer->pos], wsize);
+        ssize_t wr = write(filedes, &buffer->data[buffer->pos], wsize);
         if (wr < 0)
-        {
             return -1;
-        }
+
+        buffer->pos += wr;
     }
 
     return 0;
@@ -121,9 +196,7 @@ int iobuf_readcleanline(struct iobuf *buffer, char **begin)
     {
         const char bchar = buffer->data[bpos];
         if (bchar == 0x0A)
-        {
             break;
-        }
     }
 
     buffer->pos = (bpos < bsize) ? bpos + 1 : bpos;

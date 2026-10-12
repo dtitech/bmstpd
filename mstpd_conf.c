@@ -289,7 +289,7 @@ static int conf_loadfile(struct iobuf *iob, const char *filename)
     int fd = open(filename, 0, O_RDONLY);
     if (fd < 0)
         return -1;
-    int ret = iobuf_read_from_fd(iob, fd);
+    int ret = iobuf_read_from_fd_all(iob, fd);
     close(fd);
     if (ret < 0)
         return -1;
