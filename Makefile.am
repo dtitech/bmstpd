@@ -6,7 +6,8 @@ sbin_PROGRAMS = mstpd mstpctl
 mstpd_libs = \
 	lib/hmac_md5.c lib/hmac_md5.h lib/libnetlink.c lib/libnetlink.h \
 	lib/netif_utils.c lib/netif_utils.h lib/list.h lib/log.h \
-	lib/clock_gettime.h lib/io_buffer.c lib/io_buffer.h
+	lib/clock_gettime.h lib/io_buffer.c lib/io_buffer.h \
+	lib/exec_cmd.c lib/exec_cmd.h
 
 mstpd_SOURCES = \
 	main.c mstp.c mstp.h epoll_loop.c epoll_loop.h packet.c packet.h \

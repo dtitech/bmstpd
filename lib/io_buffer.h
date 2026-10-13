@@ -24,6 +24,8 @@ void iobuf_cleanup(struct iobuf *buffer);
 
 int iobuf_resize(struct iobuf *buffer, size_t new_size);
 
+int iobuf_write(struct iobuf *buffer, const void *data, int size);
+
 int iobuf_read_from_fd(struct iobuf *buffer, int filedes);
 int iobuf_read_from_fd_sz(struct iobuf *buffer, int filedes, int size);
 int iobuf_read_from_fd_all(struct iobuf *buffer, int filedes);

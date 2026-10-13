@@ -7,6 +7,7 @@
 ******************************************************************************/
 
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <errno.h>
 
@@ -56,6 +57,25 @@ int iobuf_resize(struct iobuf *buffer, size_t new_size)
     buffer->data = (char *)new_data;
     buffer->cap = new_cap;
     return 0;
+}
+
+int iobuf_write(struct iobuf *buffer, const void *data, int size)
+{
+    if (!size)
+        return 0;
+
+    size_t bfree = buffer->cap - buffer->size;
+    if (bfree < size)
+    {
+        const size_t esize = iobuf_round_to_page_size(buffer->cap + size);
+        if (iobuf_resize(buffer, esize))
+            return -1;
+    }
+
+    memcpy(&(buffer->data[buffer->size]), data, size);
+    buffer->size += size;
+
+    return size;
 }
 
 int iobuf_read_from_fd(struct iobuf *buffer, int filedes)
